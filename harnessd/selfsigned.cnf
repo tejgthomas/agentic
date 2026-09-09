@@ -1,0 +1,24 @@
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+x509_extensions = v3_req
+
+[dn]
+C = US
+ST = Michigan
+L = Ann Arbor
+O = UM EECS
+OU = Agentic
+CN = YOUR_SERVER_HOSTNAME_OR_IP
+
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = YOUR_SERVER_HOSTNAME
+IP.1 = YOUR_SERVER_IP

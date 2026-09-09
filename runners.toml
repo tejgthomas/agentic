@@ -1,0 +1,43 @@
+[apis.cerebras]
+url = "https://api.cerebras.ai"
+key = "CEREBRAS_API_KEY"
+
+[apis.gemini]
+url = "https://generativelanguage.googleapis.com"
+key = "GEMINI_API_KEY"
+
+[apis.groq]
+url = "https://api.groq.com/openai"
+key = "GROQ_API_KEY"
+
+[apis.mistral]
+url = "https://api.mistral.ai"
+key = "MISTRAL_API_KEY"
+
+[apis.openrouter]
+url = "https://openrouter.ai/api"
+key = "OPENROUTER_API_KEY"
+
+[apis.local]
+url = ""
+key = ""
+
+[[runners]]
+api = "cerebras"
+model = "llama3.1-8b"
+weight = 0.8
+
+[[runners]]
+api = "groq"
+model = "llama-3.1-8b-instant"
+weight = 0.8
+
+[[runners]]
+api = "mistral"
+model = "open-mistral-7b"
+weight = 0.7
+
+[[runners]]
+api = "openrouter"
+model = "google/gemma-3-4b-it:free"
+weight = 0.6
