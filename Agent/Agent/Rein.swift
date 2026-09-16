@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 
 private let harness = "https://mada.eecs.umich.edu"
-private let api = "/llmprompt"
+private let api = "/llmchat"
+private let appID = Bundle.main.bundleIdentifier ?? "edu.umich.tejg.agent"
 private let model = "gemma4:e4b"
 private let showThinking = true
 
@@ -12,6 +13,7 @@ struct Message: Codable {
 }
 
 struct OpenAIRequest: Codable {
+    var appID: String
     var model: String
     var messages: [Message]
     var stream = true
@@ -46,12 +48,12 @@ final class Rein {
     private var isThinking = false
 
     @MainActor
-    func llmPrompt(
+    func llmChat(
         messages: [Message],
         completion: Binding<Chat>,
         errMsg: Binding<String>
     ) async {
-        let requestBody = OpenAIRequest(model: model, messages: messages)
+        let requestBody = OpenAIRequest(appID: appID, model: model, messages: messages)
         let request: URLRequest
 
         do {
@@ -132,7 +134,9 @@ final class Rein {
             case .message:
                 try handleMessageData(value, completion: completion, errMsg: errMsg)
             case .error:
-                errMsg.wrappedValue += value
+                let message = "**SSE Error Event** \(value)"
+                completion.wrappedValue.content = message
+                errMsg.wrappedValue = value
             case .unknown:
                 errMsg.wrappedValue += "\n\nUnknown SSE event: \(value)"
             }

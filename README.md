@@ -1,6 +1,6 @@
-# llmPrompt
+# llmChat
 
-iOS SwiftUI mobile agent and Python Starlette `harnessd` backend for the UM EECS Agentic llmPrompt tutorial.
+iOS SwiftUI mobile agent and Python Starlette `harnessd` backend for the UM EECS Agentic llmChat tutorial. This builds on the previous llmPrompt submission in the same GitHub repo.
 
 ## Project Layout
 
@@ -18,10 +18,10 @@ iOS SwiftUI mobile agent and Python Starlette `harnessd` backend for the UM EECS
 
 Update these before final submission:
 
-* `Agent/Agent/Rein.swift` `harness` value to your own HTTPS backend after deployment.
+* `Agent/Agent/Rein.swift` `harness` value to your own HTTPS backend after deployment. The app currently points at `https://mada.eecs.umich.edu` for frontend testing.
 * `runners.toml` and your server environment variables with at least one real LLM runner API key, or a working local runner URL.
 * `harnessd/harnessd.py` certificate paths if your deployed Ubuntu username/path differs from `/home/ubuntu/agentic`.
-* The front end currently uses bundle identifier `edu.umich.tejg.agent`.
+* The front end sends `edu.umich.tejg.agent` as its `appID`, matching the current iOS bundle identifier.
 
 GitHub repo: <https://github.com/tejgthomas/llmPrompt.git>
 

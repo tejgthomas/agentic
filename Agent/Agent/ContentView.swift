@@ -51,7 +51,7 @@ struct ContentView: View {
                 .background(Color(uiColor: .systemGray6))
             }
             .background(Color(uiColor: .systemGray6))
-            .navigationTitle("llmPrompt")
+            .navigationTitle("llmChat")
             .navigationBarTitleDisplayMode(.inline)
             .alert("LLM Error", isPresented: Binding(
                 get: { !vm.errMsg.isEmpty },
@@ -133,7 +133,7 @@ struct SubmitButton: View {
         let messages = [Message(role: chat.role, content: chat.content)]
 
         Task {
-            await vm.rein.llmPrompt(
+            await vm.rein.llmChat(
                 messages: messages,
                 completion: $vm.conversation[completionIndex],
                 errMsg: $vm.errMsg

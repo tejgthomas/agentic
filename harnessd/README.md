@@ -1,6 +1,6 @@
 # harnessd
 
-Python Starlette/Granian implementation of the llmPrompt backend.
+Python Starlette/Granian implementation of the llmPrompt and llmChat backend.
 
 ## Deploy Notes
 
@@ -32,4 +32,6 @@ The graded root endpoint is implemented as:
 
 ```text
 GET / -> UM EECS Agentic harnessd
+POST /llmprompt -> SSE chat completion proxy
+POST /llmchat -> SSE chat completion proxy with SQLite conversation context keyed by appID
 ```
