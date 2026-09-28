@@ -10,7 +10,10 @@ import msgspec
 from msgspec import Struct
 
 
-RUNNERS_CONFIG = os.environ.get("RUNNERS_CONFIG", "/home/ubuntu/agentic/runners.toml")
+RUNNERS_CONFIG = os.environ.get(
+    "RUNNERS_CONFIG",
+    str(Path(__file__).resolve().parent.parent / "runners.toml"),
+)
 
 
 class LlmRunnerAPI(Struct):

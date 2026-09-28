@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-private let harness = "https://mada.eecs.umich.edu"
+private let harness = "https://34.56.51.226"
 private let api = "/llmchat"
 private let appID = Bundle.main.bundleIdentifier ?? "edu.umich.tejg.agent"
 private let model = "gemma4:e4b"
@@ -53,6 +53,7 @@ final class Rein {
         completion: Binding<Chat>,
         errMsg: Binding<String>
     ) async {
+        isThinking = false
         let requestBody = OpenAIRequest(appID: appID, model: model, messages: messages)
         let request: URLRequest
 

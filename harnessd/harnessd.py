@@ -1,6 +1,11 @@
+import os
 from pathlib import Path
 
 from granian.server import Server
+
+DEPLOY_ROOT = Path(__file__).resolve().parent.parent
+SSL_CERT = Path(os.environ.get("HARNESSD_SSL_CERT", DEPLOY_ROOT / "harnessd.crt"))
+SSL_KEY = Path(os.environ.get("HARNESSD_SSL_KEY", DEPLOY_ROOT / "harnessd.key"))
 
 if __name__ == "__main__":
     Server(
@@ -10,8 +15,8 @@ if __name__ == "__main__":
         interface="asgi",
         loop="uvloop",
         log_access=True,
-        ssl_cert=Path("/home/ubuntu/agentic/harnessd.crt"),
-        ssl_key=Path("/home/ubuntu/agentic/harnessd.key"),
+        ssl_cert=SSL_CERT,
+        ssl_key=SSL_KEY,
         workers=1,
         workers_kill_timeout=3,
         respawn_failed_workers=True,

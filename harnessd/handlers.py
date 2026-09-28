@@ -1,4 +1,5 @@
 from http import HTTPStatus
+import codecs
 import logging
 import sqlite3
 from pathlib import Path
@@ -260,11 +261,21 @@ async def _stream_and_persist(response: Response, turn_id: int):
     completion: list[str] = []
     reasoning: list[str] = []
     pending = ""
+    decoder = codecs.getincrementaldecoder("utf-8")()
 
-    async for chunk in response.aiter_raw():
-        yield chunk
-        pending += chunk.decode(errors="ignore")
-        pending = _accumulate_sse_lines(pending, completion, reasoning)
+    try:
+        async for chunk in response.aiter_raw():
+            yield chunk
+            pending += decoder.decode(chunk)
+            pending = _accumulate_sse_lines(pending, completion, reasoning)
+
+        pending += decoder.decode(b"", final=True)
+        _accumulate_sse_lines(f"{pending}\n", completion, reasoning)
+    except Exception as e:
+        logger.exception("LLM stream failed during llmchat turn.")
+        async for event in _sse_error(f"LLM stream failed: {e}"):
+            yield event
+        return
 
     try:
         _update_completion(
