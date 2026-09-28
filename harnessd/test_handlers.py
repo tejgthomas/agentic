@@ -21,11 +21,17 @@ class LlmChatDatabaseTests(unittest.TestCase):
         handlers.DB_PATH = self.original_db_path
         self.tempdir.cleanup()
 
-    def request(self, app_id: str, prompt: str) -> handlers.LlmChatRequest:
+    def request(
+        self, app_id: str, prompt: str, system: str | None = None
+    ) -> handlers.LlmChatRequest:
+        messages = []
+        if system:
+            messages.append(handlers.Message(role="system", content=system))
+        messages.append(handlers.Message(role="user", content=prompt))
         return handlers.LlmChatRequest(
             appID=app_id,
             model="test-model",
-            messages=Raw(json.encode([handlers.Message(role="user", content=prompt)])),
+            messages=Raw(json.encode(messages)),
         )
 
     def test_context_is_chronological_and_isolated_by_app_id(self):
@@ -56,6 +62,32 @@ class LlmChatDatabaseTests(unittest.TestCase):
 
         self.assertEqual(row[:3], ("Answer", "Reasoning", 1))
         self.assertIsInstance(row[3], int)
+
+    def test_system_and_user_messages_share_one_turn(self):
+        handlers._insert_prompt(self.request("app.one", "Ready", "Keep one city"))
+
+        context = handlers._conversation_context("app.one")
+
+        self.assertEqual(
+            [(message.role, message.content) for message in context],
+            [("system", "Keep one city"), ("user", "Ready")],
+        )
+
+    def test_legacy_text_prompt_and_clear_are_supported(self):
+        with sqlite3.connect(handlers.DB_PATH) as db:
+            db.execute(
+                "INSERT INTO turns(appID, prompt, completed) VALUES (?, ?, 0)",
+                ("app.one", '[{"role":"system","content":"literal text"}]'),
+            )
+        handlers._insert_prompt(self.request("app.two", "Keep me"))
+
+        context = handlers._conversation_context("app.one")
+        handlers._clear_context("app.one")
+
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0].role, "user")
+        self.assertEqual(handlers._conversation_context("app.one"), [])
+        self.assertEqual(len(handlers._conversation_context("app.two")), 1)
 
     def test_stream_forwards_and_persists_tokens_split_across_utf8_chunks(self):
         turn = handlers._insert_prompt(self.request("app.one", "Question"))

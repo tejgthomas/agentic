@@ -128,6 +128,26 @@ async def llmchat(request: Request):
     )
 
 
+async def llmclear(request: Request):
+    client_ip = request.client.host if request.client else "Unknown"
+    try:
+        openai_request = json.decode(await request.body(), type=LlmChatRequest)
+    except Exception:
+        return _log_client_err(client_ip, HTTPStatus.BAD_REQUEST, "Invalid JSON body.")
+
+    try:
+        _clear_context(openai_request.appID)
+    except Exception:
+        logger.exception("SQLite error while clearing llmchat context.")
+        return _log_client_err(
+            client_ip,
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            "Unable to clear conversation context.",
+        )
+
+    return PlainTextResponse("Conversation context cleared.", status_code=HTTPStatus.OK)
+
+
 async def _route_prompt(request: Request, openai_request: OpenAIRequest) -> Response | None:
     client_ip = request.client.host if request.client else "Unknown"
 
@@ -218,22 +238,15 @@ def _connect_db():
 
 def _insert_prompt(openai_request: LlmChatRequest) -> int:
     messages = json.decode(openai_request.messages, type=list[Message])
-    prompt = _latest_user_prompt(messages)
+    if not messages or not any(message.content for message in messages):
+        raise ValueError("messages must include content.")
 
     with _connect_db() as db:
         cursor = db.execute(
             "INSERT INTO turns(appID, prompt, completed) VALUES (?, ?, 0)",
-            (openai_request.appID, prompt),
+            (openai_request.appID, json.encode(messages)),
         )
         return int(cursor.lastrowid)
-
-
-def _latest_user_prompt(messages: list[Message]) -> str:
-    for message in reversed(messages):
-        if message.role == "user" and message.content:
-            return message.content
-
-    raise ValueError("messages must include a user message with content.")
 
 
 def _conversation_context(app_id: str) -> list[Message]:
@@ -241,7 +254,7 @@ def _conversation_context(app_id: str) -> list[Message]:
     with _connect_db() as db:
         rows = db.execute(
             """
-            SELECT prompt, completion
+            SELECT typeof(prompt), prompt, completion
             FROM turns
             WHERE appID = ?
             ORDER BY turnID
@@ -249,12 +262,20 @@ def _conversation_context(app_id: str) -> list[Message]:
             (app_id,),
         )
 
-        for prompt, completion in rows:
-            messages.append(Message(role="user", content=prompt))
+        for storage_type, prompt, completion in rows:
+            if storage_type == "blob":
+                messages.extend(json.decode(prompt, type=list[Message]))
+            else:
+                messages.append(Message(role="user", content=prompt))
             if completion:
                 messages.append(Message(role="assistant", content=completion))
 
     return messages
+
+
+def _clear_context(app_id: str):
+    with _connect_db() as db:
+        db.execute("DELETE FROM turns WHERE appID = ?", (app_id,))
 
 
 async def _stream_and_persist(response: Response, turn_id: int):

@@ -41,4 +41,5 @@ The graded root endpoint is implemented as:
 GET / -> UM EECS Agentic harnessd
 POST /llmprompt -> SSE chat completion proxy
 POST /llmchat -> SSE chat completion proxy with SQLite conversation context keyed by appID
+POST /llmclear -> clears SQLite conversation context for the request appID
 ```

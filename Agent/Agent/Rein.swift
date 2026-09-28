@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 
 private let harness = "https://34.56.51.226"
-private let api = "/llmchat"
+private let chatAPI = "/llmchat"
+private let clearAPI = "/llmclear"
 private let appID = Bundle.main.bundleIdentifier ?? "edu.umich.tejg.agent"
 private let model = "gemma4:e4b"
 private let showThinking = true
@@ -52,35 +53,56 @@ final class Rein {
         messages: [Message],
         completion: Binding<Chat>,
         errMsg: Binding<String>
-    ) async {
+    ) async -> Bool {
         isThinking = false
+        errMsg.wrappedValue = ""
         let requestBody = OpenAIRequest(appID: appID, model: model, messages: messages)
         let request: URLRequest
 
         do {
-            request = try prepareRequest(body: requestBody)
+            request = try prepareRequest(body: requestBody, api: chatAPI)
         } catch {
             errMsg.wrappedValue = "Prepare request failed \(error)"
-            return
+            return false
         }
 
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
                 errMsg.wrappedValue = "Harness returned a non-HTTP response."
-                return
+                return false
             }
             guard http.statusCode == 200 else {
                 errMsg.wrappedValue = "Harness returned HTTP \(http.statusCode)."
-                return
+                return false
             }
             try await processSse(bytes: bytes, completion: completion, errMsg: errMsg)
+            return errMsg.wrappedValue.isEmpty
         } catch {
             errMsg.wrappedValue = "Connect to harness failed \(error)"
+            return false
         }
     }
 
-    private func prepareRequest(body: OpenAIRequest) throws -> URLRequest {
+    @MainActor
+    func llmClear(errMsg: Binding<String>) async -> Bool {
+        errMsg.wrappedValue = ""
+        do {
+            let body = OpenAIRequest(appID: appID, model: model, messages: [])
+            let request = try prepareRequest(body: body, api: clearAPI)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                errMsg.wrappedValue = "Harness could not clear the conversation."
+                return false
+            }
+            return true
+        } catch {
+            errMsg.wrappedValue = "Clear conversation failed \(error)"
+            return false
+        }
+    }
+
+    private func prepareRequest(body: OpenAIRequest, api: String) throws -> URLRequest {
         guard let url = URL(string: "\(harness)\(api)") else {
             throw URLError(.badURL)
         }
@@ -141,6 +163,11 @@ final class Rein {
             case .unknown:
                 errMsg.wrappedValue += "\n\nUnknown SSE event: \(value)"
             }
+        }
+
+        if isThinking {
+            completion.wrappedValue.content += "\n</think>"
+            isThinking = false
         }
     }
 
