@@ -24,7 +24,7 @@ iOS SwiftUI Guess the City and Guess the Landmark games with a Python Starlette 
 
 Tejvir Thomas (`tejgthomas19`) completed the frontend, backend, testing, deployment, and design document individually.
 
-GitHub repo: <https://github.com/tejgthomas/llmPrompt.git>
+GitHub repo: <https://github.com/tejgthomas/agentic.git>
 
 ## Honor Code Pledge
 
