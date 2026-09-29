@@ -6,7 +6,7 @@ private let chatAPI = "/llmchat"
 private let clearAPI = "/llmclear"
 private let appID = Bundle.main.bundleIdentifier ?? "edu.umich.tejg.agent"
 private let model = "gemma4:e4b"
-private let showThinking = true
+private let showThinking = false
 
 struct Message: Codable {
     var role = "user"

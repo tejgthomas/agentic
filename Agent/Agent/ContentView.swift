@@ -60,9 +60,9 @@ final class ChatViewModel: ObservableObject {
     func clear() async {
         guard phase == .idle else { return }
         phase = .clearing
-        if await rein.llmClear(errMsg: $errMsg) {
+        if await rein.llmClear(errMsg: errMsgBinding) {
             conversation = []
-            systemPrompt = game.rules
+            systemPrompt = ""
             userPrompt = ""
             initialized = false
         }
@@ -72,7 +72,7 @@ final class ChatViewModel: ObservableObject {
     func selectGame(_ selection: GameChoice) async {
         guard selection != game, phase == .idle else { return }
         phase = .clearing
-        guard await rein.llmClear(errMsg: $errMsg) else {
+        guard await rein.llmClear(errMsg: errMsgBinding) else {
             phase = .idle
             return
         }
@@ -91,10 +91,21 @@ final class ChatViewModel: ObservableObject {
         }
         conversation.append(Chat(role: "assistant", content: ""))
         let index = conversation.count - 1
+        let completionBinding = Binding<Chat>(
+            get: { self.conversation[index] },
+            set: { self.conversation[index] = $0 }
+        )
         return await rein.llmChat(
             messages: messages,
-            completion: $conversation[index],
-            errMsg: $errMsg
+            completion: completionBinding,
+            errMsg: errMsgBinding
+        )
+    }
+
+    private var errMsgBinding: Binding<String> {
+        Binding(
+            get: { self.errMsg },
+            set: { self.errMsg = $0 }
         )
     }
 }
@@ -179,11 +190,11 @@ struct ContentView: View {
                 }
                 .padding(12)
             }
-            .onChange(of: vm.conversation.map(\.content)) { _ in
+            .frame(maxHeight: .infinity)
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: vm.conversation.count) { _ in
                 if let last = vm.conversation.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+                    proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
         }
