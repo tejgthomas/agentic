@@ -2,44 +2,108 @@ import Foundation
 import SwiftUI
 
 private let harness = "https://34.56.51.226"
-private let api = "/llmchat"
+private let api = "/llmtools"
 private let appID = Bundle.main.bundleIdentifier ?? "edu.umich.tejg.agent"
-private let model = "gemma4:e4b"
+private let toolbox = Toolbox()
+private let model = "qwen3.5:9b"
 private let showThinking = true
 
-struct Message: Codable {
-    var role = "user"
-    var content: String?
+struct OpenAIFunction: Codable {
+    let name: String?
+    let arguments: String?
 }
 
-struct OpenAIRequest: Codable {
-    var appID: String
-    var model: String
+struct OpenAIToolCall: Codable {
+    let id: String
+    let type: String = "function"
+    let function: OpenAIFunction
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case type = "type"
+        case function = "function"
+    }
+}
+
+struct Message: Encodable {
+    let role: String
+    let content: String?
+    var tool_calls: [OpenAIToolCall]?
+    var tool_call_id: String?
+
+    init(
+        role: String = "user",
+        content: String = "",
+        tool_calls: [OpenAIToolCall]? = nil,
+        tool_call_id: String? = nil
+    ) {
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
+}
+
+struct OpenAIRequest: Encodable {
+    let appID: String
+    var turnID: Int64?
+    let model: String
+    let max_tokens = 8192
     var messages: [Message]
-    var stream = true
+    var tools: [OpenAIToolSchema]?
+    let stream = true
+
+    init(
+        appID: String,
+        turnID: Int64? = nil,
+        model: String,
+        messages: [Message],
+        tools: [OpenAIToolSchema]? = nil
+    ) {
+        self.appID = appID
+        self.turnID = turnID
+        self.model = model
+        self.messages = messages
+        self.tools = tools
+    }
 }
 
-struct Delta: Codable {
-    var content: String?
-    var reasoning: String?
-    var reasoning_content: String?
+struct ToolCallDelta: Decodable {
+    let index: Int
+    let id: String?
+    let function: OpenAIFunction?
 }
 
-struct Choice: Codable {
-    var delta: Delta
-    var finish_reason: String?
+struct Delta: Decodable {
+    let content: String?
+    let reasoning: String?
+    let reasoning_content: String?
+    let tool_calls: [ToolCallDelta]?
 }
 
-struct OpenAIResponse: Codable {
-    var model: String?
-    var choices: [Choice]
-    var created: Int?
+struct Choice: Decodable {
+    let delta: Delta
+    let finish_reason: String?
 }
 
-enum SseEvent {
-    case error
-    case message
-    case unknown
+struct OpenAIResponse: Decodable {
+    let model: String?
+    let choices: [Choice]?
+    let created: Int?
+}
+
+enum SseEvent { case Error, Message, ToolCalls, Unknown }
+
+struct ToolCallsData: Decodable {
+    let turnID: Int64
+    let calls: [OpenAIToolCall]
+}
+
+private struct SseAccumulator {
+    let completion: Binding<Chat>
+    let errMsg: Binding<String>
+    var turnID: Int64? = nil
+    var parallelCalls = [OpenAIToolCall]()
 }
 
 final class Rein {
@@ -48,43 +112,80 @@ final class Rein {
     private var isThinking = false
 
     @MainActor
-    func llmChat(
-        messages: [Message],
+    func llmTools(
+        _ messages: [Message],
         completion: Binding<Chat>,
         errMsg: Binding<String>
     ) async {
-        isThinking = false
-        let requestBody = OpenAIRequest(appID: appID, model: model, messages: messages)
-        let request: URLRequest
-
-        do {
-            request = try prepareRequest(body: requestBody)
-        } catch {
-            errMsg.wrappedValue = "Prepare request failed \(error)"
+        guard let harnessApi = URL(string: "\(harness)\(api)") else {
+            errMsg.wrappedValue = "Bad harness URL \(harness)\(api)"
             return
         }
 
-        do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                errMsg.wrappedValue = "Harness returned a non-HTTP response."
+        isThinking = false
+        errMsg.wrappedValue = ""
+        var openAIRequest = OpenAIRequest(
+            appID: appID,
+            model: model,
+            messages: messages,
+            tools: toolbox.schemas()
+        )
+        var sendNewPrompt = true
+
+        while sendNewPrompt {
+            sendNewPrompt = false
+            let request: URLRequest
+            do {
+                request = try prepareRequest(harnessApi, openAIRequest)
+            } catch {
+                errMsg.wrappedValue = "Prepare request failed \(error)"
                 return
             }
-            guard http.statusCode == 200 else {
-                errMsg.wrappedValue = "Harness returned HTTP \(http.statusCode)."
+
+            let bytes: URLSession.AsyncBytes
+            do {
+                bytes = try await postPrompt(request)
+            } catch {
+                errMsg.wrappedValue = "Connect to harness failed \(error)"
                 return
             }
-            try await processSse(bytes: bytes, completion: completion, errMsg: errMsg)
-        } catch {
-            errMsg.wrappedValue = "Connect to harness failed \(error)"
+
+            var acc = SseAccumulator(completion: completion, errMsg: errMsg)
+            do {
+                try await processSse(bytes, &acc)
+            } catch {
+                errMsg.wrappedValue = "SSE parsing failed \(error)"
+                completion.wrappedValue.content.append("\n\n**\(errMsg.wrappedValue)**\n\n")
+                return
+            }
+
+            if !acc.parallelCalls.isEmpty {
+                guard let turnID = acc.turnID else {
+                    errMsg.wrappedValue = "Tool call event missing turnID"
+                    completion.wrappedValue.content.append("\n\n**\(errMsg.wrappedValue)**\n\n")
+                    return
+                }
+
+                var toolResults = [Message]()
+                for call in acc.parallelCalls {
+                    let result = await toolbox.invoke(function: call.function)
+                        ?? "Tool '\(call.function.name ?? "unknown")' does not exist. Complete the prompt without the tool."
+                    toolResults.append(Message(
+                        role: "tool",
+                        content: result,
+                        tool_call_id: call.id
+                    ))
+                }
+
+                openAIRequest.messages = toolResults
+                openAIRequest.turnID = turnID
+                openAIRequest.tools = nil
+                sendNewPrompt = true
+            }
         }
     }
 
-    private func prepareRequest(body: OpenAIRequest) throws -> URLRequest {
-        guard let url = URL(string: "\(harness)\(api)") else {
-            throw URLError(.badURL)
-        }
-
+    private func prepareRequest(_ url: URL, _ body: OpenAIRequest) throws -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -93,53 +194,61 @@ final class Rein {
         return request
     }
 
+    private func postPrompt(_ request: URLRequest) async throws -> URLSession.AsyncBytes {
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard http.statusCode == 200 else {
+            throw URLError(.badServerResponse, userInfo: [
+                NSLocalizedDescriptionKey: "Harness returned HTTP \(http.statusCode)."
+            ])
+        }
+        return bytes
+    }
+
     @MainActor
     private func processSse(
-        bytes: URLSession.AsyncBytes,
-        completion: Binding<Chat>,
-        errMsg: Binding<String>
+        _ bytes: URLSession.AsyncBytes,
+        _ acc: inout SseAccumulator
     ) async throws {
-        var event = SseEvent.message
+        var sseEvent = SseEvent.Message
 
         for try await line in bytes.lines {
             if line.isEmpty {
-                event = .message
+                sseEvent = .Message
                 continue
             }
 
             let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2 else {
-                continue
-            }
-
+            guard parts.count == 2 else { continue }
             let tag = String(parts[0])
-            let value = parts[1].trimmingCharacters(in: .whitespaces)
+            let tagline = parts[1].trimmingCharacters(in: .whitespaces)
 
             if tag == "event" {
-                switch value.lowercased() {
-                case "error":
-                    event = .error
-                case "message":
-                    event = .message
-                default:
-                    event = .unknown
+                switch tagline {
+                case "error", "Error", "ERROR": sseEvent = .Error
+                case "message", "Message", "MESSAGE": sseEvent = .Message
+                case "tool_calls", "Tool_calls", "TOOL_CALLS": sseEvent = .ToolCalls
+                default: sseEvent = .Unknown
                 }
                 continue
             }
 
-            guard tag == "data", !value.isEmpty, value != "[DONE]" else {
-                continue
-            }
-
-            switch event {
-            case .message:
-                try handleMessageData(value, completion: completion, errMsg: errMsg)
-            case .error:
-                let message = "**SSE Error Event** \(value)"
-                completion.wrappedValue.content = message
-                errMsg.wrappedValue = value
-            case .unknown:
-                errMsg.wrappedValue += "\n\nUnknown SSE event: \(value)"
+            guard tag == "data", !tagline.isEmpty, tagline != "[DONE]" else { continue }
+            switch sseEvent {
+            case .Message:
+                try handleMessageData(tagline, completion: acc.completion, errMsg: acc.errMsg)
+            case .ToolCalls:
+                let event = try decoder.decode(ToolCallsData.self, from: Data(tagline.utf8))
+                acc.turnID = event.turnID
+                acc.parallelCalls.append(contentsOf: event.calls)
+            case .Error:
+                let message = "**SSE Error Event** \(tagline)"
+                acc.completion.wrappedValue.content = message
+                acc.errMsg.wrappedValue = tagline
+            case .Unknown:
+                acc.errMsg.wrappedValue += "\n\nUnknown SSE event: \(tagline)"
             }
         }
     }
@@ -151,9 +260,7 @@ final class Rein {
         errMsg: Binding<String>
     ) throws {
         let response = try decoder.decode(OpenAIResponse.self, from: Data(data.utf8))
-        guard let choice = response.choices.first else {
-            return
-        }
+        guard let choice = response.choices?.first else { return }
 
         let token = decoratedContent(choice.delta)
         if !token.isEmpty {
@@ -177,19 +284,11 @@ final class Rein {
             isThinking = false
             return result
         }
-
-        guard showThinking else {
-            return ""
-        }
-
+        guard showThinking else { return "" }
         let reason = [delta.reasoning_content, delta.reasoning]
             .compactMap { $0 }
             .first { !$0.isEmpty }
-
-        guard let reason else {
-            return ""
-        }
-
+        guard let reason else { return "" }
         let result = isThinking ? reason : "<think>\n\(reason)"
         isThinking = true
         return result
