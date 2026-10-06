@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from httpx import Request, Response
 from msgspec import Raw, json
@@ -70,7 +71,7 @@ class LlmChatDatabaseTests(unittest.TestCase):
             request=Request("POST", "https://runner.test/v1/chat/completions"),
         )
 
-        forwarded = asyncio.run(_collect(handlers._stream_and_persist(response, turn)))
+        forwarded = asyncio.run(_collect(handlers._stream_chat(response, turn)))
 
         self.assertEqual(forwarded, event)
         with sqlite3.connect(handlers.DB_PATH) as db:
@@ -78,6 +79,93 @@ class LlmChatDatabaseTests(unittest.TestCase):
                 "SELECT completion, completed FROM turns WHERE turnID = ?", (turn,)
             ).fetchone()
         self.assertEqual((completion, completed), ("café", 1))
+
+    def test_tool_schema_calls_results_and_foreign_keys_are_persisted(self):
+        schema = [{"type": "function", "function": {"name": "get_location"}}]
+        initial = handlers.LlmToolsRequest(
+            appID="app.one",
+            model="test-model",
+            messages=Raw(json.encode([handlers.Message(role="user", content="Weather?")])),
+            tools=Raw(json.encode(schema)),
+        )
+        turn = handlers._prepare_tools_turn(initial)
+        call = handlers.OpenAIToolCall(
+            id="call-1",
+            function=handlers.OpenAIFunction(name="get_location", arguments="{}"),
+        )
+        handlers._record_calls(turn, [call])
+        follow_up = handlers.LlmToolsRequest(
+            appID="app.one",
+            turnID=turn,
+            model="test-model",
+            messages=Raw(json.encode([
+                handlers.Message(role="tool", content="latitude: 42, longitude: -83",
+                                 tool_call_id="call-1")
+            ])),
+        )
+        handlers._prepare_tools_turn(follow_up)
+
+        context = handlers._tools_context("app.one", turn)
+        with sqlite3.connect(handlers.DB_PATH) as db:
+            row = db.execute(
+                "SELECT idx, name, arguments, result, result_ts FROM calls WHERE id = 'call-1'"
+            ).fetchone()
+
+        self.assertEqual(row[:4], (0, "get_location", "{}",
+                                  "latitude: 42, longitude: -83"))
+        self.assertIsInstance(row[4], int)
+        self.assertEqual([message.role for message in context], ["user", "assistant", "tool"])
+        self.assertEqual(len(handlers._tool_schemas("app.one")), 2)
+
+    def test_tool_call_delta_arguments_are_reassembled(self):
+        parts = {}
+        first = json.decode(
+            b'{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1",'
+            b'"function":{"name":"get_weather","arguments":"{\\\"latitude\\\":\\\"42"}}]}}]}',
+            type=handlers.OpenAIResponse,
+        )
+        second = json.decode(
+            b'{"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"arguments":"\\\",\\\"longitude\\\":\\\"-83\\\"}"}}]}}]}',
+            type=handlers.OpenAIResponse,
+        )
+
+        self.assertTrue(handlers._accumulate_tool_deltas(first, parts))
+        self.assertTrue(handlers._accumulate_tool_deltas(second, parts))
+        self.assertEqual(parts[0], {
+            "id": "call-1",
+            "name": "get_weather",
+            "arguments": '{"latitude":"42","longitude":"-83"}',
+        })
+
+    def test_get_weather_uses_open_meteo_result(self):
+        class ForecastResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "latitude": 42.28831,
+                    "longitude": -83.700775,
+                    "current": {"temperature_2m": 56.5},
+                }
+
+        class ForecastClient:
+            async def get(self, url, params):
+                self.url = url
+                self.params = params
+                return ForecastResponse()
+
+        client = ForecastClient()
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(client=client)))
+        result = asyncio.run(handlers.getWeather(request, "42.292098", "-83.715880"))
+
+        self.assertEqual(
+            result,
+            "Weather at lat: 42.28831, lon: -83.700775 is 56.5ºF",
+        )
+        self.assertEqual(client.url, handlers.OPEN_METEO_URL)
+        self.assertEqual(client.params["temperature_unit"], "fahrenheit")
 
 
 class _ChunkedStream:

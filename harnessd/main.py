@@ -10,6 +10,8 @@ routes = [
     Route("/", handlers.index, methods=["GET"]),
     Route("/llmprompt", handlers.llmprompt, methods=["POST"]),
     Route("/llmchat", handlers.llmchat, methods=["POST"]),
+    Route("/llmtools", handlers.llmtools, methods=["POST"]),
+    Route("/weather", handlers.weather, methods=["POST"]),
 ]
 
 app = Starlette(routes=routes)
