@@ -119,6 +119,15 @@ class LlmChatDatabaseTests(unittest.TestCase):
         self.assertEqual([message.role for message in context], ["user", "assistant", "tool"])
         self.assertEqual(len(handlers._tool_schemas("app.one")), 2)
 
+    def test_llmtools_request_decodes_tools_array(self):
+        body = json.decode(
+            b'{"appID":"app.one","model":"test-model","messages":[],'
+            b'"tools":[{"type":"function","function":{"name":"get_location"}}]}',
+            type=handlers.LlmToolsRequest,
+        )
+
+        self.assertEqual(json.decode(body.tools)[0]["function"]["name"], "get_location")
+
     def test_tool_call_delta_arguments_are_reassembled(self):
         parts = {}
         first = json.decode(

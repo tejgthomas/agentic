@@ -32,7 +32,7 @@ class OpenAIRequest(Struct, omit_defaults=True):
     model: str
     messages: Raw
     stream: bool = False
-    tools: Raw | None = None
+    tools: Raw = Raw(b"null")
 
 
 class LlmChatRequest(Struct, omit_defaults=True):
@@ -47,7 +47,7 @@ class LlmToolsRequest(Struct, omit_defaults=True):
     model: str
     messages: Raw
     turnID: int | None = None
-    tools: Raw | None = None
+    tools: Raw = Raw(b"null")
     stream: bool = True
 
 
@@ -300,7 +300,7 @@ def _prepare_tools_turn(body: LlmToolsRequest) -> int:
             cursor = db.execute("INSERT INTO turns(appID, prompt, completed) VALUES (?, ?, 0)",
                                 (body.appID, json.encode(messages)))
             turn_id = int(cursor.lastrowid)
-            if body.tools is not None:
+            if bytes(body.tools) != b"null":
                 db.execute("""INSERT INTO tools(appID, schemas) VALUES (?, ?)
                            ON CONFLICT(appID) DO UPDATE SET schemas = excluded.schemas,
                            timestamp = unixepoch()""", (body.appID, bytes(body.tools)))
