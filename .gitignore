@@ -1,0 +1,21 @@
+.DS_Store
+**/.DS_Store
+
+# Python virtual environments, bytecode, caches, and local database state
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+*.py[cod]
+harnessd/harnessd.db
+harnessd/harnessd.db-shm
+harnessd/harnessd.db-wal
+
+# Xcode user-specific state
+xcuserdata/
+**/xcuserdata/
+*.xcuserstate
+DerivedData/
+**/DerivedData/
