@@ -15,7 +15,7 @@ class OpenAIFunction(Struct, omit_defaults=True):
     arguments: str | None = None
 
 
-class OpenAIToolCall(Struct, omit_defaults=True):
+class OpenAIToolCall(Struct):
     id: str
     function: OpenAIFunction
     type: str = "function"

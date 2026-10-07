@@ -94,6 +94,8 @@ class LlmChatDatabaseTests(unittest.TestCase):
             function=handlers.OpenAIFunction(name="get_location", arguments="{}"),
         )
         handlers._record_calls(turn, [call])
+        encoded_call = json.decode(json.encode(call))
+        self.assertEqual(encoded_call["type"], "function")
         follow_up = handlers.LlmToolsRequest(
             appID="app.one",
             turnID=turn,
