@@ -1,6 +1,6 @@
 # harnessd
 
-Python Starlette/Granian implementation of the llmPrompt and llmChat backend.
+Python Starlette/Granian implementation of the llmPrompt through llmHITL backend.
 
 ## Deploy Notes
 
@@ -41,4 +41,11 @@ The graded root endpoint is implemented as:
 GET / -> UM EECS Agentic harnessd
 POST /llmprompt -> SSE chat completion proxy
 POST /llmchat -> SSE chat completion proxy with SQLite conversation context keyed by appID
+POST /llmtools -> SSE chat and tool-call proxy
+POST /addagent -> validate a Google ID token and issue a limited-lifetime ticket
+POST /weather -> direct Open-Meteo helper endpoint
 ```
+
+The resident `get_weather_auth` tool requires a non-expired ticket issued by
+`/addagent`. Google OAuth client configuration remains in the iOS app; the
+backend verifies that the token audience matches the submitted client ID.

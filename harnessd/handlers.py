@@ -1,6 +1,8 @@
 from http import HTTPStatus
 import logging
+import secrets
 import sqlite3
+import time
 from pathlib import Path
 
 from httpx import RequestError, Response
@@ -56,6 +58,11 @@ class WeatherRequest(Struct):
     lon: str
 
 
+class AddAgentRequest(Struct):
+    clientID: str
+    idToken: str
+
+
 class FunctionDelta(Struct, omit_defaults=True):
     name: str | None = None
     arguments: str | None = None
@@ -84,8 +91,10 @@ class OpenAIResponse(Struct, omit_defaults=True):
 
 
 DB_PATH = Path(__file__).with_name("harnessd.db")
-WEATHER_SCHEMA_PATH = Path(__file__).with_name("tools") / "get_weather.json"
+WEATHER_SCHEMA_PATH = Path(__file__).with_name("tools") / "get_weather_auth.json"
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+GOOGLE_TOKEN_INFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+TICKET_LIFETIME = 600
 
 logger = logging.getLogger("runner")
 logging.basicConfig(level=logging.INFO)
@@ -159,6 +168,30 @@ async def weather(request: Request):
     return PlainTextResponse(result, status_code=HTTPStatus.OK)
 
 
+async def addagent(request: Request):
+    client_ip = request.client.host if request.client else "Unknown"
+    try:
+        body = json.decode(await request.body(), type=AddAgentRequest)
+        profile = await _verify_google_id_token(request, body.clientID, body.idToken)
+    except Exception as error:
+        logger.info("401 | %s | Google ID token rejected: %s", client_ip, error)
+        return PlainTextResponse("Unauthorized", status_code=HTTPStatus.UNAUTHORIZED)
+
+    creator = profile.get("name") or "Profile NA"
+    ticket = secrets.token_urlsafe(32)
+    expiration = int(time.time()) + TICKET_LIFETIME
+    with _connect_db() as db:
+        db.execute("DELETE FROM tickets WHERE expiration <= unixepoch()")
+        db.execute("INSERT INTO tickets(ticket, creator, expiration) VALUES (?, ?, ?)",
+                   (ticket, creator, expiration))
+    return PlainTextResponse(
+        json.encode({"ticket": ticket, "creator": creator,
+                     "lifetime": TICKET_LIFETIME}),
+        media_type="application/json",
+        status_code=HTTPStatus.OK,
+    )
+
+
 async def llmtools(request: Request):
     client_ip = request.client.host if request.client else "Unknown"
     try:
@@ -190,6 +223,23 @@ async def getWeather(request: Request, lat: str, lon: str) -> str:
     forecast = response.json()
     return (f"Weather at lat: {forecast['latitude']}, lon: {forecast['longitude']} "
             f"is {forecast['current']['temperature_2m']}ºF")
+
+
+async def _verify_google_id_token(request: Request, client_id: str,
+                                  id_token: str) -> dict[str, object]:
+    if not client_id or not id_token:
+        raise ValueError("clientID and idToken are required.")
+    response = await request.app.state.client.get(
+        GOOGLE_TOKEN_INFO_URL,
+        params={"id_token": id_token},
+    )
+    response.raise_for_status()
+    profile = response.json()
+    if profile.get("aud") != client_id:
+        raise ValueError("ID token audience does not match clientID.")
+    if int(profile.get("exp", 0)) <= int(time.time()):
+        raise ValueError("ID token has expired.")
+    return profile
 
 
 async def _route_prompt(request: Request, openai_request: OpenAIRequest) -> Response | None:
@@ -254,6 +304,17 @@ def init_database():
                 appID TEXT PRIMARY KEY, schemas BLOB,
                 timestamp INTEGER NOT NULL DEFAULT (unixepoch())
             );
+            CREATE TABLE IF NOT EXISTS tickets (
+                ticket TEXT PRIMARY KEY, creator TEXT NOT NULL,
+                expiration INTEGER NOT NULL,
+                ticket_ts INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE INDEX IF NOT EXISTS tixex_idx ON tickets(expiration);
+            CREATE VIEW IF NOT EXISTS tix_ts AS
+                SELECT ticket, creator,
+                datetime(expiration, 'unixepoch', 'localtime') AS expiration,
+                datetime(ticket_ts, 'unixepoch', 'localtime') AS ticket_ts
+                FROM tickets;
         """)
 
 
@@ -416,13 +477,18 @@ async def _stream_tools(request: Request, response: Response,
         remote_calls: list[OpenAIToolCall] = []
         resident_results: list[Message] = []
         for call in calls:
-            if call.function.name == "get_weather":
+            if call.function.name == "get_weather_auth":
                 try:
                     arguments = json.decode((call.function.arguments or "{}").encode())
-                    result = await getWeather(request, str(arguments["latitude"]),
-                                              str(arguments["longitude"]))
+                    if not _valid_ticket(str(arguments["ticket"])):
+                        result = ("401 Unauthorized. Ask the user if they want to try again. "
+                                  "If so, call get_auth for a fresh ticket and retry. Do not "
+                                  "reuse a ticket from earlier context.")
+                    else:
+                        result = await getWeather(request, str(arguments["latitude"]),
+                                                  str(arguments["longitude"]))
                 except Exception as error:
-                    result = f"get_weather failed: {error}"
+                    result = f"get_weather_auth failed: {error}"
                 _record_result(call.id, result)
                 resident_results.append(Message(role="tool", content=result,
                                                 tool_call_id=call.id))
@@ -441,6 +507,15 @@ async def _stream_tools(request: Request, response: Response,
             async for event in _sse_error("All available LLM providers are unavailable."):
                 yield event
             return
+
+
+def _valid_ticket(ticket: str) -> bool:
+    with _connect_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM tickets WHERE ticket = ? AND expiration > unixepoch()",
+            (ticket,),
+        ).fetchone()
+    return row is not None
 
 
 def _decode_data_line(line: str) -> OpenAIResponse | None:

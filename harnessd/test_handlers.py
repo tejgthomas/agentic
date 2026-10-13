@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -177,6 +178,210 @@ class LlmChatDatabaseTests(unittest.TestCase):
         )
         self.assertEqual(client.url, handlers.OPEN_METEO_URL)
         self.assertEqual(client.params["temperature_unit"], "fahrenheit")
+
+    def test_ticket_is_valid_only_before_expiration(self):
+        with sqlite3.connect(handlers.DB_PATH) as db:
+            db.execute(
+                "INSERT INTO tickets(ticket, creator, expiration) VALUES (?, ?, ?)",
+                ("valid", "Test User", int(time.time()) + 60),
+            )
+            db.execute(
+                "INSERT INTO tickets(ticket, creator, expiration) VALUES (?, ?, ?)",
+                ("expired", "Test User", int(time.time()) - 1),
+            )
+
+        self.assertTrue(handlers._valid_ticket("valid"))
+        self.assertFalse(handlers._valid_ticket("expired"))
+        self.assertFalse(handlers._valid_ticket("missing"))
+
+    def test_google_token_requires_matching_audience_and_future_expiration(self):
+        class TokenResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "aud": "client-id",
+                    "exp": str(int(time.time()) + 60),
+                    "name": "Test User",
+                }
+
+        class TokenClient:
+            async def get(self, url, params):
+                self.url = url
+                self.params = params
+                return TokenResponse()
+
+        client = TokenClient()
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(client=client)))
+        profile = asyncio.run(handlers._verify_google_id_token(
+            request, "client-id", "google-token"
+        ))
+
+        self.assertEqual(profile["name"], "Test User")
+        self.assertEqual(client.url, handlers.GOOGLE_TOKEN_INFO_URL)
+        self.assertEqual(client.params, {"id_token": "google-token"})
+
+        with self.assertRaisesRegex(ValueError, "audience"):
+            asyncio.run(handlers._verify_google_id_token(
+                request, "different-client", "google-token"
+            ))
+
+    def test_addagent_issues_and_persists_ticket(self):
+        class TokenResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "aud": "client-id",
+                    "exp": str(int(time.time()) + 60),
+                    "name": "Test User",
+                }
+
+        class TokenClient:
+            async def get(self, url, params):
+                return TokenResponse()
+
+        class AddAgentRequest:
+            client = SimpleNamespace(host="127.0.0.1")
+            app = SimpleNamespace(state=SimpleNamespace(client=TokenClient()))
+
+            async def body(self):
+                return b'{"clientID":"client-id","idToken":"google-token"}'
+
+        response = asyncio.run(handlers.addagent(AddAgentRequest()))
+        payload = json.decode(response.body)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["creator"], "Test User")
+        self.assertEqual(payload["lifetime"], handlers.TICKET_LIFETIME)
+        self.assertTrue(handlers._valid_ticket(payload["ticket"]))
+
+    def test_addagent_rejects_invalid_google_token(self):
+        class TokenResponse:
+            def raise_for_status(self):
+                raise ValueError("invalid token")
+
+        class TokenClient:
+            async def get(self, url, params):
+                return TokenResponse()
+
+        class AddAgentRequest:
+            client = SimpleNamespace(host="127.0.0.1")
+            app = SimpleNamespace(state=SimpleNamespace(client=TokenClient()))
+
+            async def body(self):
+                return b'{"clientID":"client-id","idToken":"invalid"}'
+
+        response = asyncio.run(handlers.addagent(AddAgentRequest()))
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.body, b"Unauthorized")
+        with sqlite3.connect(handlers.DB_PATH) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM tickets").fetchone()[0], 0)
+
+    def test_authorized_resident_weather_tool_runs_and_completes_turn(self):
+        with sqlite3.connect(handlers.DB_PATH) as db:
+            db.execute(
+                "INSERT INTO tickets(ticket, creator, expiration) VALUES (?, ?, ?)",
+                ("valid-ticket", "Test User", int(time.time()) + 60),
+            )
+        body = handlers.LlmToolsRequest(
+            appID="app.one",
+            model="test-model",
+            messages=Raw(json.encode([handlers.Message(role="user", content="Weather?")])),
+        )
+        turn = handlers._prepare_tools_turn(body)
+        context = handlers._tools_context("app.one", turn)
+        routed = handlers.OpenAIRequest(
+            model="test-model",
+            messages=Raw(json.encode(context)),
+            stream=True,
+        )
+        arguments = json.encode({
+            "ticket": "valid-ticket",
+            "latitude": "42.28",
+            "longitude": "-83.74",
+        }).decode()
+        tool_event = json.encode({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "weather-call",
+                        "function": {
+                            "name": "get_weather_auth",
+                            "arguments": arguments,
+                        },
+                    }],
+                },
+            }],
+        }).decode()
+        initial = Response(
+            200,
+            content=_ChunkedStream([f"data: {tool_event}\n\ndata: [DONE]\n\n".encode()]),
+            request=Request("POST", "https://runner.test/v1/chat/completions"),
+        )
+
+        class ForecastResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "latitude": 42.28,
+                    "longitude": -83.74,
+                    "current": {"temperature_2m": 60.0},
+                }
+
+        class ForecastClient:
+            called = False
+
+            async def get(self, url, params):
+                self.called = True
+                return ForecastResponse()
+
+        forecast_client = ForecastClient()
+        request = SimpleNamespace(
+            client=SimpleNamespace(host="127.0.0.1"),
+            app=SimpleNamespace(state=SimpleNamespace(client=forecast_client)),
+        )
+        final_event = (
+            'data: {"choices":[{"delta":{"content":"It is 60F."}}]}\n\n'
+            'data: [DONE]\n\n'
+        ).encode()
+        original_route = handlers._route_prompt
+
+        async def route_final(_request, routed_request):
+            messages = json.decode(routed_request.messages, type=list[handlers.Message])
+            self.assertEqual(messages[-1].role, "tool")
+            self.assertIn("60.0ºF", messages[-1].content)
+            return Response(
+                200,
+                content=_ChunkedStream([final_event]),
+                request=Request("POST", "https://runner.test/v1/chat/completions"),
+            )
+
+        handlers._route_prompt = route_final
+        try:
+            streamed = asyncio.run(_collect(
+                handlers._stream_tools(request, initial, routed, turn)
+            ))
+        finally:
+            handlers._route_prompt = original_route
+
+        self.assertTrue(forecast_client.called)
+        self.assertTrue(streamed.endswith(final_event))
+        self.assertNotIn(b"get_weather_auth", streamed)
+        with sqlite3.connect(handlers.DB_PATH) as db:
+            completion, result = db.execute(
+                """SELECT turns.completion, calls.result FROM turns
+                   JOIN calls USING(turnID) WHERE turns.turnID = ?""",
+                (turn,),
+            ).fetchone()
+        self.assertEqual(completion, "It is 60F.")
+        self.assertIn("60.0ºF", result)
 
 
 class _ChunkedStream:

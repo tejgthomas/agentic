@@ -11,6 +11,7 @@ routes = [
     Route("/llmprompt", handlers.llmprompt, methods=["POST"]),
     Route("/llmchat", handlers.llmchat, methods=["POST"]),
     Route("/llmtools", handlers.llmtools, methods=["POST"]),
+    Route("/addagent", handlers.addagent, methods=["POST"]),
     Route("/weather", handlers.weather, methods=["POST"]),
 ]
 
