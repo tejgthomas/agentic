@@ -9,6 +9,7 @@ __pycache__/
 .pytest_cache/
 **/.pytest_cache/
 *.py[cod]
+*.egg-info/
 harnessd/harnessd.db
 harnessd/harnessd.db-shm
 harnessd/harnessd.db-wal
