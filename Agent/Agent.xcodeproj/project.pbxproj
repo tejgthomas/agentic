@@ -312,8 +312,8 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				GOOGLE_CLIENT_ID = YOUR_CLIENT_ID;
-				GOOGLE_REVERSED_CLIENT_ID = YOUR_REVERSED_CLIENT_ID;
+				GOOGLE_CLIENT_ID = "672104204481-gum0uha9td8adusoitrkm1k5vrt4173r.apps.googleusercontent.com";
+				GOOGLE_REVERSED_CLIENT_ID = "com.googleusercontent.apps.672104204481-gum0uha9td8adusoitrkm1k5vrt4173r";
 				INFOPLIST_FILE = Agent/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -344,8 +344,8 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				GOOGLE_CLIENT_ID = YOUR_CLIENT_ID;
-				GOOGLE_REVERSED_CLIENT_ID = YOUR_REVERSED_CLIENT_ID;
+				GOOGLE_CLIENT_ID = "672104204481-gum0uha9td8adusoitrkm1k5vrt4173r.apps.googleusercontent.com";
+				GOOGLE_REVERSED_CLIENT_ID = "com.googleusercontent.apps.672104204481-gum0uha9td8adusoitrkm1k5vrt4173r";
 				INFOPLIST_FILE = Agent/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

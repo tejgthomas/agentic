@@ -114,8 +114,7 @@ final class Rein {
     func addAgent(_ idToken: String?, errMsg: Binding<String>) async -> String? {
         guard let idToken,
               let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
-              !clientID.isEmpty,
-              clientID != "YOUR_CLIENT_ID" else {
+              !clientID.isEmpty else {
             errMsg.wrappedValue = "Missing Google OAuth client ID. "
                 + "Set GOOGLE_CLIENT_ID in the Agent target build settings."
             return nil

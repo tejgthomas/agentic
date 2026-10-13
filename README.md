@@ -6,19 +6,10 @@ tag; the `llmChat`, `llmPlay`, and `llmTools` milestone tags remain unchanged.
 
 ## Personal configuration required
 
-Before running the iOS app, create an iOS OAuth client for the bundle ID
-`edu.umich.tejg.agent`. In both Debug and Release settings for the Agent target,
-replace:
-
-- `GOOGLE_CLIENT_ID = YOUR_CLIENT_ID` with the `CLIENT_ID` from Google's
-  downloaded credentials plist.
-- `GOOGLE_REVERSED_CLIENT_ID = YOUR_REVERSED_CLIENT_ID` with its
-  `REVERSED_CLIENT_ID`.
-
-The project already includes the GoogleSignIn and GoogleSignInSwift package
-products, the generated Info.plist entries, and the Face ID usage description.
-The OAuth client values are account-specific and are intentionally not invented
-or committed here.
+The Agent target is configured with its Google iOS OAuth client for bundle ID
+`edu.umich.tejg.agent`. The project includes the GoogleSignIn and
+GoogleSignInSwift package products, generated Info.plist entries, reversed-client
+URL scheme, and Face ID usage description.
 
 The backend also needs at least one configured runner API key or local runner,
 as described in `harnessd/README.md`.
