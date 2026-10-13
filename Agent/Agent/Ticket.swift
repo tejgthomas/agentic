@@ -32,15 +32,6 @@ final class Ticket {
         }
 
         let authContext = LAContext()
-#if targetEnvironment(simulator)
-        guard (try? await authContext.evaluatePolicy(
-            .deviceOwnerAuthentication,
-            localizedReason: "to allow simulator to access Keychain"
-        )) == true else {
-            await MainActor.run { errMsg.wrappedValue = "Open Keychain failed" }
-            return
-        }
-#endif
         existenceQuery = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrDescription: "Ticket",
@@ -93,15 +84,6 @@ final class Ticket {
         ]
         let existingStatus = SecItemCopyMatching(item as CFDictionary, nil)
         let authContext = LAContext()
-#if targetEnvironment(simulator)
-        guard (try? await authContext.evaluatePolicy(
-            .deviceOwnerAuthentication,
-            localizedReason: "to allow simulator to access Keychain"
-        )) == true else {
-            await MainActor.run { errMsg.wrappedValue = "Save Keychain failed" }
-            return
-        }
-#endif
         let dateString = Self.dateFormatter.string(from: expiration)
         let status: OSStatus
         if existingStatus == errSecSuccess {
