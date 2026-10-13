@@ -6,11 +6,14 @@ final class ChatViewModel: ObservableObject {
     @Published var conversation: [Chat] = []
     @Published var errMsg = ""
     @Published var isSending = false
+    @Published var showOk = false
+    @Published var getSignedin = false
+    var signinCompletion: (() -> Void)?
     let rein = Rein()
 }
 
 struct ContentView: View {
-    @StateObject private var vm = ChatViewModel()
+    @ObservedObject var vm: ChatViewModel
 
     var body: some View {
         NavigationStack {
@@ -51,17 +54,29 @@ struct ContentView: View {
                 .background(Color(uiColor: .systemGray6))
             }
             .background(Color(uiColor: .systemGray6))
-            .navigationTitle("llmTools")
+            .navigationTitle("llmHITL")
             .navigationBarTitleDisplayMode(.inline)
-            .alert("LLM Error", isPresented: Binding(
+            .alert(vm.showOk ? "Advisory" : "LLM Error", isPresented: Binding(
                 get: { !vm.errMsg.isEmpty },
-                set: { if !$0 { vm.errMsg = "" } }
+                set: {
+                    if !$0 {
+                        vm.errMsg = ""
+                        vm.showOk = false
+                    }
+                }
             )) {
                 Button("OK") {
                     vm.errMsg = ""
+                    vm.showOk = false
                 }
             } message: {
                 Text(vm.errMsg)
+            }
+            .sheet(isPresented: $vm.getSignedin) {
+                SigninView(vm: vm, isPresenting: $vm.getSignedin)
+                    .presentationDetents([.fraction(0.25)])
+                    .presentationDragIndicator(.hidden)
+                    .interactiveDismissDisabled()
             }
         }
     }
@@ -146,6 +161,6 @@ struct SubmitButton: View {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView()
+        ContentView(vm: ChatViewModel())
     }
 }

@@ -111,6 +111,53 @@ final class Rein {
     private let decoder = JSONDecoder()
     private var isThinking = false
 
+    func addAgent(_ idToken: String?, errMsg: Binding<String>) async -> String? {
+        guard let idToken,
+              let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
+              !clientID.isEmpty,
+              clientID != "YOUR_CLIENT_ID" else {
+            errMsg.wrappedValue = "Missing Google OAuth client ID. "
+                + "Set GOOGLE_CLIENT_ID in the Agent target build settings."
+            return nil
+        }
+        guard let harnessApi = URL(string: "\(harness)/addagent") else {
+            errMsg.wrappedValue = "addAgent: Bad URL"
+            return nil
+        }
+        let agentAuth = ["clientID": clientID, "idToken": idToken]
+        guard let requestBody = try? JSONSerialization.data(withJSONObject: agentAuth) else {
+            errMsg.wrappedValue = "addAgent: JSON serialization failed"
+            return nil
+        }
+
+        var request = URLRequest(url: harnessApi)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.httpBody = requestBody
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let description = HTTPURLResponse.localizedString(forStatusCode: status)
+                errMsg.wrappedValue = "addAgent: \(status) \(description)"
+                return nil
+            }
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ticket = object["ticket"] as? String,
+                  let lifetime = object["lifetime"] as? TimeInterval else {
+                errMsg.wrappedValue = "addAgent: Invalid response"
+                return nil
+            }
+            Ticket.shared.ticket = ticket
+            Ticket.shared.creator = object["creator"] as? String ?? "Profile NA"
+            Ticket.shared.expiration = Date().addingTimeInterval(lifetime - 1)
+            return ticket
+        } catch {
+            errMsg.wrappedValue = "addAgent: POST failed \(error.localizedDescription)"
+            return nil
+        }
+    }
+
     @MainActor
     func llmTools(
         _ messages: [Message],

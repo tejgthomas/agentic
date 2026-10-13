@@ -41,8 +41,40 @@ fileprivate func jsonToSchema(_ tool: String) -> OpenAIToolSchema {
     }
 }
 
-func getLocation(_ argv: [String]) async -> String {
-    "latitude: \(LocManagerViewModel.shared.location.lat), longitude: \(LocManagerViewModel.shared.location.lon)"
+func getLocAuth(_ argv: [String]) async -> String {
+    guard let presentedTicket = argv.first,
+          Ticket.shared.ticket == presentedTicket else {
+        return "401 Unauthorized. Ask the user if they want to try again. "
+            + "If so, you **MUST** call the get_auth tool again to get a fresh new ticket "
+            + "and retry the operation. DO NOT reuse any ticket in context/history that "
+            + "came before this message."
+    }
+    let location = LocManagerViewModel.shared.location
+    return "latitude: \(location.lat), longitude: \(location.lon)"
+}
+
+func getAuth(_ argv: [String]) async -> String {
+    while true {
+        if let ticket = Ticket.shared.ticket {
+            return "Authorization ticket is: \(ticket)"
+        }
+        guard let vm = Ticket.shared.vm else {
+            return "401 Unauthorized. Complete the prompt by informing user that task "
+                + "cannot be completed due to failed authorization."
+        }
+        await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                vm.signinCompletion = {
+                    continuation.resume()
+                }
+                vm.getSignedin = true
+            }
+        }
+        if Ticket.shared.ticket == nil {
+            return "401 Unauthorized. Complete the prompt by informing user that task "
+                + "cannot be completed due to failed authorization."
+        }
+    }
 }
 
 typealias ToolFunction = ([String]) async -> String
@@ -57,7 +89,8 @@ struct Toolbox {
 
     init() {
         self.tools = [
-            "get_location": Tool(schema: jsonToSchema("get_location"), function: getLocation),
+            "get_auth": Tool(schema: jsonToSchema("get_auth"), function: getAuth),
+            "get_loc_auth": Tool(schema: jsonToSchema("get_loc_auth"), function: getLocAuth),
         ]
     }
 
